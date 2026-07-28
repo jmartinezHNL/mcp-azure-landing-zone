@@ -1,0 +1,18 @@
+# Plantilla de variables de entrada.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# terraform.tfvars se carga automáticamente y está ignorado por git.
+# Para usar varios entornos, crea prod.tfvars / dev.tfvars y pásalos con
+# -var-file, o con el parámetro var_file de la herramienta MCP
+# 'detect_infrastructure_drift'.
+
+subscription_id = "00000000-0000-0000-0000-000000000000"
+location        = "eastus"
+environment     = "prod"
+
+common_tags = {
+  managedBy = "terraform"
+  project   = "azure-landing-zone"
+  owner     = "plataforma"
+}

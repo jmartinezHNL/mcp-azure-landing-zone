@@ -6,12 +6,14 @@
 |---|---|---|---|
 | Python | 3.10 | `python3 --version` | `brew install python@3.12` |
 | Azure CLI | 2.50 | `az version` | `brew install azure-cli` |
-| Terraform | 1.5 | `terraform version` | `brew install terraform` |
+| Terraform | 1.5 | `terraform version` | `brew tap hashicorp/tap && brew install hashicorp/tap/terraform` |
 | Cliente MCP | — | — | Claude Desktop o Claude Code |
 
 > **Terraform es opcional**: solo lo necesita la herramienta
-> `detect_infrastructure_drift`. El resto funciona sin él. En esta máquina
-> `terraform` **no está instalado** actualmente.
+> `detect_infrastructure_drift`. El resto funciona sin él.
+>
+> Homebrew-core ya no distribuye Terraform (cambio de licencia a BUSL): hay que
+> usar el tap oficial de HashiCorp. En esta máquina está instalado v1.15.8.
 
 Además necesitas una **identidad de Azure** con permisos de lectura sobre la
 subscripción (ver [02-configuracion.md](02-configuracion.md#25-permisos-necesarios-en-azure)).

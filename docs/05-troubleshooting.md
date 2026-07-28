@@ -149,10 +149,12 @@ descartan. Para ver **todas** las etiquetas de un recurso usa
 
 ### `No se ha encontrado el ejecutable 'terraform' en el PATH`
 
-**Estado actual de esta máquina: Terraform no está instalado.**
+Homebrew-core dejó de distribuir Terraform tras el cambio a licencia BUSL, por
+lo que `brew install terraform` falla. Usa el tap oficial de HashiCorp:
 
 ```bash
-brew install terraform
+brew tap hashicorp/tap
+brew install hashicorp/tap/terraform
 terraform version
 ```
 

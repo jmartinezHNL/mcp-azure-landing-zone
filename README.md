@@ -55,6 +55,12 @@ mcp-azure-landing-zone/
 ├── config.example.yaml       # Plantilla de configuración
 ├── requirements.txt          # Dependencias
 ├── .env.example              # Plantilla de variables de entorno
+├── terraform/                # Configuración Terraform de la Landing Zone
+│   ├── versions.tf           # Versiones y backend
+│   ├── providers.tf          # Provider azurerm
+│   ├── variables.tf          # Variables de entrada
+│   ├── main.tf               # Data sources y ejemplo de importación
+│   └── outputs.tf            # Outputs de la configuración
 ├── tools/
 │   ├── __init__.py
 │   ├── resources.py          # get_full_subscription_topology / get_untagged_resources / list_resources
@@ -145,8 +151,11 @@ Comprobado el 2026-07-28 en esta máquina:
 |---|---|
 | Dependencias Python | Instaladas en `.venv` (Python 3.14) |
 | Azure CLI (`az`) | Instalado y con sesión iniciada |
-| `terraform` | **No encontrado en el PATH** → `detect_infrastructure_drift` devolverá error hasta instalarlo |
-| `config.yaml` | Con valores **placeholder**: hay que poner la subscripción real y el directorio de Terraform |
+| `terraform` | v1.15.8 instalado desde el tap `hashicorp/tap` |
+| `terraform/` | Inicializado (`terraform init`) y con línea base aplicada → `SIN DRIFT` |
+| `config.yaml` | Apuntando a la subscripción real y al directorio `terraform/` |
+
+Las cinco herramientas se han ejecutado con éxito contra la subscripción real.
 
 ---
 
