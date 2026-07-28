@@ -1,0 +1,33 @@
+# Configuración con datos reales (usa config.example.yaml como plantilla)
+config.yaml
+config.*.yaml
+!config.example.yaml
+
+# Secretos
+.env
+*.pem
+*.key
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+tfplan
+
+# IDE / SO
+.idea/
+.vscode/
+.DS_Store

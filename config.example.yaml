@@ -1,0 +1,26 @@
+# Plantilla de configuración de "mcp-azure-landing-zone".
+#
+# Uso:
+#   cp config.example.yaml config.yaml
+#   # edita config.yaml con tus valores reales
+#
+# Todos los valores admiten sobrescritura por variable de entorno:
+#   azure.default_subscription_id -> AZURE_SUBSCRIPTION_ID
+#   terraform.working_dir         -> TERRAFORM_WORKING_DIR
+# La variable de entorno SIEMPRE gana sobre el fichero.
+
+azure:
+  # GUID de la subscripción por defecto.
+  # Obtenerlo con:  az account show --query id -o tsv
+  # Listar todas:   az account list --query "[].{name:name,id:id}" -o table
+  default_subscription_id: "00000000-0000-0000-0000-000000000000"
+
+terraform:
+  # Ruta ABSOLUTA al directorio raíz de la configuración de Terraform de la
+  # Landing Zone (el directorio que contiene los .tf y donde se ha ejecutado
+  # 'terraform init'). No uses '~': indica la ruta completa.
+  working_dir: "/ruta/absoluta/a/tu/terraform"
+
+  # Segundos máximos que se deja correr 'terraform plan' antes de abortarlo.
+  # Sube este valor en landing zones grandes (varios cientos de recursos).
+  timeout_seconds: 600
