@@ -109,16 +109,39 @@ az policy state trigger-scan --subscription <SUBSCRIPTION_ID>
 
 ### La respuesta es enorme / se agota el contexto
 
-Filtra por resource group:
+Por orden de eficacia:
 
-> Lista solo los recursos de `rg-alz-hub-prod`
+1. **Usa el modo resumen de la topología** en vez del inventario plano:
 
-O sube los límites internos si de verdad los necesitas:
+   > Dame el mapa de la Landing Zone sin el detalle de cada recurso
+
+   (`get_subscription_topology` con `include_resources=false`: ~3 000 tokens
+   frente a ~55 000 en una subscripción de 1 600 recursos).
+
+2. **Limita el detalle por grupo** con `max_resources_per_group=10`.
+
+3. **Filtra por resource group** al pedir el detalle:
+
+   > Lista solo los recursos de `rg-alz-hub-prod`
+
+Constantes ajustables si de verdad necesitas más volumen:
 
 | Constante | Fichero | Valor por defecto |
 |---|---|---|
+| `ESSENTIAL_TAG_KEYS` | `tools/resources.py` | 10 claves de gobierno conservadas |
+| `MAX_TAGS_PER_RESOURCE` | `tools/resources.py` | 5 tags si no hay ninguna de gobierno |
+| `TOP_RESOURCE_TYPES` | `tools/resources.py` | 15 tipos en el resumen global |
 | `MAX_DETAIL_RECORDS` | `tools/policy.py` | 100 registros no conformes |
 | `MAX_OUTPUT_CHARS` | `tools/terraform.py` | 20 000 caracteres de salida |
+
+---
+
+### Falta un tag en la topología pero sí existe en el portal
+
+`get_subscription_topology` filtra las etiquetas a las de gobierno
+(`ESSENTIAL_TAG_KEYS`). Si un recurso tiene alguna de ellas, las demás se
+descartan. Para ver **todas** las etiquetas de un recurso usa
+`list_azure_resources`, que no aplica ningún filtro.
 
 ---
 

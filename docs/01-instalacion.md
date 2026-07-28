@@ -112,8 +112,8 @@ print([t.name for t in asyncio.run(server.mcp.list_tools())])
 Salida esperada:
 
 ```
-['list_azure_resources', 'list_untagged_resources', 'get_policy_compliance',
- 'detect_infrastructure_drift', 'get_server_configuration']
+['list_azure_resources', 'list_untagged_resources', 'get_subscription_topology',
+ 'get_policy_compliance', 'detect_infrastructure_drift', 'get_server_configuration']
 ```
 
 ### c) Conectividad real con Azure

@@ -69,7 +69,7 @@ Requisitos del directorio:
    las credenciales del proceso que ejecuta el servidor MCP.
 4. Si tu configuración necesita variables, prepara un `.tfvars` y pásalo con el
    parámetro `var_file` de la herramienta (ver
-   [03-herramientas.md](03-herramientas.md#34-detect_infrastructure_drift)).
+   [03-herramientas.md](03-herramientas.md#35-detect_infrastructure_drift)).
 
 Formato: ruta **absoluta**, sin `~`.
 ✅ `"/Users/juancarlosmartinez/infra/landing-zone/prod"`

@@ -12,12 +12,13 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 from mcp.server.fastmcp import FastMCP
 
 from tools.policy import get_policy_states as _get_policy_states
+from tools.resources import get_full_subscription_topology as _get_topology
 from tools.resources import get_untagged_resources as _get_untagged_resources
 from tools.resources import list_resources as _list_resources
 from tools.terraform import DEFAULT_TIMEOUT_SECONDS
@@ -77,6 +78,35 @@ CONFIG = load_config()
 mcp = FastMCP("Azure Landing Zone Assistant")
 
 
+def _dump(payload: Any) -> str:
+    """Serializa a JSON legible la estructura devuelta por una herramienta."""
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def _missing_subscription() -> str:
+    """Error estándar cuando no hay ninguna subscripción resoluble."""
+    return _dump(
+        {
+            "status": "error",
+            "message": (
+                "No hay subscripción disponible: indique subscription_id o "
+                "configure azure.default_subscription_id en config.yaml."
+            ),
+        }
+    )
+
+
+def _dump_list(items: List[Any], key: str, **extra: Any) -> str:
+    """Envuelve una lista en un sobre JSON con estado y recuento.
+
+    Las funciones de ``tools.resources`` señalan los fallos devolviendo una lista
+    con un único elemento de error; en ese caso se propaga tal cual.
+    """
+    if len(items) == 1 and isinstance(items[0], dict) and items[0].get("status") == "error":
+        return _dump(items[0])
+    return _dump({"status": "ok", **extra, "count": len(items), key: items})
+
+
 def _resolve_subscription(subscription_id: Optional[str]) -> str:
     """Devuelve la subscripción indicada o, en su defecto, la de config.yaml."""
     if subscription_id:
@@ -114,18 +144,14 @@ def list_azure_resources(
     """
     subscription = _resolve_subscription(subscription_id)
     if not subscription:
-        return json.dumps(
-            {
-                "status": "error",
-                "message": (
-                    "No hay subscripción disponible: indique subscription_id o "
-                    "configure azure.default_subscription_id en config.yaml."
-                ),
-            },
-            indent=2,
-            ensure_ascii=False,
-        )
-    return _list_resources(subscription, resource_group)
+        return _missing_subscription()
+
+    return _dump_list(
+        _list_resources(subscription, resource_group),
+        key="resources",
+        subscription_id=subscription,
+        resource_group=resource_group,
+    )
 
 
 @mcp.tool()
@@ -141,23 +167,64 @@ def list_untagged_resources(subscription_id: Optional[str] = None) -> str:
             subscripción por defecto definida en config.yaml.
 
     Returns:
-        JSON en texto con el total de recursos analizados, cuántos y qué
-        porcentaje carecen de etiquetas, y el detalle de cada recurso afectado.
+        JSON en texto con el número de recursos sin etiquetar y, por cada uno,
+        su nombre, tipo, región, resource group e id ARM completo.
     """
     subscription = _resolve_subscription(subscription_id)
     if not subscription:
-        return json.dumps(
-            {
-                "status": "error",
-                "message": (
-                    "No hay subscripción disponible: indique subscription_id o "
-                    "configure azure.default_subscription_id en config.yaml."
-                ),
-            },
-            indent=2,
-            ensure_ascii=False,
+        return _missing_subscription()
+
+    return _dump_list(
+        _get_untagged_resources(subscription),
+        key="untagged_resources",
+        subscription_id=subscription,
+    )
+
+
+@mcp.tool()
+def get_subscription_topology(
+    subscription_id: Optional[str] = None,
+    include_resources: bool = True,
+    max_resources_per_group: Optional[int] = None,
+) -> str:
+    """Obtiene la topología completa de la subscripción jerarquizada por grupo.
+
+    Es la herramienta preferida para tener una visión global de la Landing Zone:
+    cuántos resource groups hay, qué contiene cada uno, en qué regiones se
+    reparten los recursos y qué tipos predominan. Devuelve solo metadatos
+    esenciales, por lo que conviene usarla en lugar de 'list_azure_resources'
+    cuando la pregunta es sobre el conjunto de la infraestructura y no sobre un
+    recurso concreto.
+
+    En subscripciones grandes empieza SIEMPRE con include_resources=False: así
+    obtienes el mapa de grupos y tipos con una fracción de los tokens, y después
+    puedes pedir el detalle solo del grupo que interese con
+    'list_azure_resources'.
+
+    Args:
+        subscription_id: Id de la subscripción de Azure. Si se omite, se usa la
+            subscripción por defecto definida en config.yaml.
+        include_resources: Si es False, omite la lista de recursos de cada grupo
+            y deja únicamente el recuento y el desglose por tipo.
+        max_resources_per_group: Máximo de recursos detallados por grupo; los
+            grupos recortados se marcan con 'resources_truncated'.
+
+    Returns:
+        JSON en texto con un bloque 'summary' agregado (totales, regiones, tipos
+        más frecuentes) y un bloque 'resource_groups' ordenado de mayor a menor
+        número de recursos.
+    """
+    subscription = _resolve_subscription(subscription_id)
+    if not subscription:
+        return _missing_subscription()
+
+    return _dump(
+        _get_topology(
+            subscription,
+            include_resources=include_resources,
+            max_resources_per_group=max_resources_per_group,
         )
-    return _get_untagged_resources(subscription)
+    )
 
 
 @mcp.tool()
@@ -180,17 +247,8 @@ def get_policy_compliance(subscription_id: Optional[str] = None) -> str:
     """
     subscription = _resolve_subscription(subscription_id)
     if not subscription:
-        return json.dumps(
-            {
-                "status": "error",
-                "message": (
-                    "No hay subscripción disponible: indique subscription_id o "
-                    "configure azure.default_subscription_id en config.yaml."
-                ),
-            },
-            indent=2,
-            ensure_ascii=False,
-        )
+        return _missing_subscription()
+
     return _get_policy_states(subscription)
 
 

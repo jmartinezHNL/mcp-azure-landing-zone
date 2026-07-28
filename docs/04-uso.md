@@ -104,23 +104,44 @@ herramienta con sus parámetros desde la interfaz.
 cd /Users/juancarlosmartinez/PycharmProjects/mcp-azure-landing-zone
 
 .venv/bin/python -c "import server; print(server.get_server_configuration())"
+.venv/bin/python -c "import server; print(server.get_subscription_topology(include_resources=False))"
 .venv/bin/python -c "import server; print(server.list_azure_resources(resource_group='rg-alz-hub-prod'))"
 .venv/bin/python -c "import server; print(server.list_untagged_resources())"
 .venv/bin/python -c "import server; print(server.get_policy_compliance())"
 .venv/bin/python -c "import server; print(server.detect_infrastructure_drift())"
 ```
 
+Comparar el coste en tokens de los tres modos de topología:
+
+```bash
+.venv/bin/python - <<'PY'
+import json
+from tools.resources import get_full_subscription_topology as topo
+SUB = "<TU_SUBSCRIPTION_ID>"
+for etiqueta, kwargs in [
+    ("completo", {}),
+    ("max 5/grupo", {"max_resources_per_group": 5}),
+    ("solo-resumen", {"include_resources": False}),
+]:
+    n = len(json.dumps(topo(SUB, **kwargs), ensure_ascii=False))
+    print(f"{etiqueta:14} -> {n:>7} chars  (~{n // 4:>6} tokens)")
+PY
+```
+
 ---
 
 ## 4.4 Prompts de ejemplo
 
-### Inventario
+### Topología e inventario
 
-> ¿Qué recursos hay desplegados en mi Landing Zone?
+> Dame un mapa de mi Landing Zone: cuántos resource groups hay y qué contiene cada uno.
 
-> Lista los recursos del resource group `rg-alz-hub-prod` y agrúpamelos por tipo.
+> ¿Cuáles son los 5 resource groups más grandes y qué tipo de recursos predominan
+> en cada uno?
 
 > ¿En qué regiones tengo recursos y cuántos hay en cada una?
+
+> Lista los recursos del resource group `rg-alz-hub-prod` con sus ids completos.
 
 > Compara los recursos de la subscripción `77308696-…` con los de la
 > `11111111-…` y dime qué hay en una que no esté en la otra.
@@ -163,10 +184,11 @@ cd /Users/juancarlosmartinez/PycharmProjects/mcp-azure-landing-zone
 ## 4.5 Flujo de trabajo recomendado
 
 1. **`get_server_configuration`** — confirma subscripción y directorio activos.
-2. **`list_azure_resources`** — entiende qué hay desplegado.
-3. **`list_untagged_resources`** — detecta huecos de gobierno.
-4. **`get_policy_compliance`** — mide el cumplimiento de seguridad.
-5. **`detect_infrastructure_drift`** — comprueba si el código refleja la realidad.
+2. **`get_subscription_topology(include_resources=False)`** — mapa global barato en tokens.
+3. **`list_azure_resources(resource_group=…)`** — baja al detalle solo del grupo relevante.
+4. **`list_untagged_resources`** — detecta huecos de gobierno.
+5. **`get_policy_compliance`** — mide el cumplimiento de seguridad.
+6. **`detect_infrastructure_drift`** — comprueba si el código refleja la realidad.
 
 Pídele a Claude que encadene los pasos y produzca un único informe; tiene todas
 las herramientas disponibles en la misma conversación.
@@ -175,6 +197,9 @@ las herramientas disponibles en la misma conversación.
 
 ## 4.6 Buenas prácticas
 
+- **Empieza por el resumen.** `get_subscription_topology(include_resources=False)`
+  cuesta ~3 000 tokens frente a los ~55 000 del detalle completo en una
+  subscripción de 1 600 recursos, y responde la mayoría de preguntas globales.
 - **Acota antes de listar.** En subscripciones grandes, filtra por
   `resource_group` para no llenar la ventana de contexto con cientos de recursos.
 - **El drift tarda.** `terraform plan` hace refresh contra Azure; en landing zones

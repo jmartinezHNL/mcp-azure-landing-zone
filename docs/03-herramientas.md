@@ -10,22 +10,133 @@ Convenciones comunes:
   devuelven como contenido legible con `status: "error"` o un prefijo `ERROR:`.
 - Los parámetros marcados como opcionales pueden omitirse; se rellenan desde
   `config.yaml`.
+- Las funciones de `tools/resources.py` devuelven estructuras nativas de Python
+  (`dict` / `list`); es `server.py` quien las serializa a JSON.
 
 ### Respuesta de error genérica
 
 ```json
 {
   "status": "error",
-  "message": "Error al consultar Azure Resource Manager.",
-  "detail": "(SubscriptionNotFound) The subscription '0000…' could not be found."
+  "message": "Permisos insuficientes: la identidad actual necesita al menos el rol 'Reader' sobre la subscripción.",
+  "detail": "(AuthorizationFailed) The client '…' does not have authorization…"
 }
 ```
 
+`message` es un diagnóstico ya traducido (autenticación, 403, 404, conectividad);
+`detail` conserva el mensaje original del SDK.
+
+### Cuál usar en cada caso
+
+| Pregunta del usuario | Herramienta |
+|---|---|
+| «¿Qué tengo desplegado?», «dame un mapa de la Landing Zone» | `get_subscription_topology` |
+| «Dame el detalle / los ids de los recursos de `rg-x`» | `list_azure_resources` |
+| «¿Qué recursos no están etiquetados?» | `list_untagged_resources` |
+| «¿Cumplo mis políticas de seguridad?» | `get_policy_compliance` |
+| «¿Coincide Terraform con la realidad?» | `detect_infrastructure_drift` |
+| «¿Qué configuración estás usando?» | `get_server_configuration` |
+
 ---
 
-## 3.1 `list_azure_resources`
+## 3.1 `get_subscription_topology`
 
-Inventario de recursos desplegados.
+Topología jerarquizada por resource group, optimizada para consumir pocos tokens.
+**Es la herramienta preferida para una visión de conjunto.**
+
+### Parámetros
+
+| Nombre | Tipo | Obligatorio | Por defecto | Descripción |
+|---|---|---|---|---|
+| `subscription_id` | string | No | `azure.default_subscription_id` | GUID de la subscripción |
+| `include_resources` | bool | No | `true` | Si es `false`, cada grupo queda reducido a su recuento y su desglose por tipo |
+| `max_resources_per_group` | int | No | `null` (sin tope) | Máximo de recursos detallados por grupo |
+
+### Respuesta
+
+```json
+{
+  "status": "ok",
+  "subscription_id": "77308696-…",
+  "summary": {
+    "total_resource_groups": 42,
+    "total_resources": 1634,
+    "empty_resource_groups": 3,
+    "resources_without_essential_tags": 1319,
+    "locations": { "eastus": 1402, "canadacentral": 118 },
+    "top_resource_types": {
+      "Sql/servers/databases": 144,
+      "Web/certificates": 142,
+      "insights/components": 91
+    },
+    "distinct_resource_types": 68
+  },
+  "detail_level": "completo",
+  "notes": "El campo 'type' omite el prefijo 'Microsoft.'. …",
+  "resource_groups": {
+    "rg-01": {
+      "location": "eastus",
+      "tags": { "environment": "prod" },
+      "resource_count": 823,
+      "types": { "Web/sites": 76, "Sql/servers/databases": 144 },
+      "resources": [
+        { "name": "plan-stage-01", "type": "Web/serverFarms",
+          "tags": { "environment": "qa", "application": "meilisearchstage" } },
+        { "name": "plan-stage-02", "type": "Web/serverFarms" }
+      ]
+    }
+  }
+}
+```
+
+| Campo | Significado |
+|---|---|
+| `summary.resources_without_essential_tags` | Recursos sin ninguna etiqueta de gobierno reconocida |
+| `summary.top_resource_types` | Los 15 tipos más frecuentes (`TOP_RESOURCE_TYPES`) |
+| `detail_level` | `"completo"` o `"solo-resumen"` según `include_resources` |
+| `resource_groups` | Ordenado de **mayor a menor** número de recursos |
+| `…[].types` | Desglose completo por tipo dentro del grupo |
+| `…[].resources_truncated` | Presente y `true` si se aplicó `max_resources_per_group` |
+
+### Optimizaciones de tokens
+
+| Técnica | Efecto |
+|---|---|
+| `type` sin el prefijo `Microsoft.` | `Microsoft.Network/virtualNetworks` → `Network/virtualNetworks` |
+| Campos vacíos omitidos | Un recurso sin tags no incluye la clave `tags` |
+| `location` omitida si coincide con la del grupo | Elimina el campo en la mayoría de recursos |
+| Tags filtradas a las de gobierno | `ESSENTIAL_TAG_KEYS`: `owner`, `costcenter`, `environment`, `project`… |
+| Grupos ordenados por tamaño | Lo relevante entra primero en el contexto |
+
+Medición real sobre una subscripción de 42 grupos y 1 634 recursos:
+
+| Modo | Tamaño | Tokens aprox. |
+|---|---|---|
+| `include_resources=true` | 218 798 chars | ~54 700 |
+| `max_resources_per_group=5` | 32 157 chars | ~8 000 |
+| `include_resources=false` | **12 305 chars** | **~3 076** |
+
+Los contadores de `summary` son idénticos en los tres modos: recortar el detalle
+no altera las cifras.
+
+> **Recomendación:** en subscripciones grandes, empieza siempre con
+> `include_resources=false` y pide después el detalle del grupo concreto con
+> `list_azure_resources`.
+
+### Notas
+
+- Los resource groups se leen antes que los recursos, de modo que los **grupos
+  vacíos también aparecen** (con `resource_count: 0`).
+- Los recursos cuyo id ARM no incluye resource group se agrupan bajo
+  `(sin-resource-group)`.
+- Una sola pasada paginada sobre `resources.list()`: no multiplica llamadas por grupo.
+
+---
+
+## 3.2 `list_azure_resources`
+
+Vista plana y detallada, con el **id ARM completo**. Úsala cuando haga falta
+identificar recursos de forma inequívoca o trabajar sobre un solo grupo.
 
 ### Parámetros
 
@@ -39,25 +150,17 @@ Inventario de recursos desplegados.
 ```json
 {
   "status": "ok",
-  "subscription_id": "77308696-6250-4529-8d8d-66944e6f5f38",
-  "resource_group": "rg-alz-hub-prod",
-  "count": 2,
+  "subscription_id": "77308696-…",
+  "resource_group": "rg-hnl-01",
+  "count": 32,
   "resources": [
     {
       "name": "vnet-hub-prod",
-      "type": "Microsoft.Network/virtualNetworks",
+      "type": "Network/virtualNetworks",
       "location": "eastus",
-      "resource_group": "rg-alz-hub-prod",
-      "tags": { "env": "prod", "owner": "plataforma" },
-      "id": "/subscriptions/7730.../resourceGroups/rg-alz-hub-prod/providers/Microsoft.Network/virtualNetworks/vnet-hub-prod"
-    },
-    {
-      "name": "stalzlogsprod001",
-      "type": "Microsoft.Storage/storageAccounts",
-      "location": "eastus",
-      "resource_group": "rg-alz-hub-prod",
-      "tags": {},
-      "id": "/subscriptions/7730.../resourceGroups/rg-alz-hub-prod/providers/Microsoft.Storage/storageAccounts/stalzlogsprod001"
+      "resource_group": "rg-hnl-01",
+      "tags": { "source": "terraform", "stage": "production" },
+      "id": "/subscriptions/7730…/providers/Microsoft.Network/virtualNetworks/vnet-hub-prod"
     }
   ]
 }
@@ -66,20 +169,21 @@ Inventario de recursos desplegados.
 | Campo | Significado |
 |---|---|
 | `count` | Número de recursos devueltos |
-| `resources[].resource_group` | Extraído del id ARM; `""` si el recurso no pertenece a ningún grupo |
-| `resources[].tags` | Diccionario vacío `{}` si el recurso no tiene etiquetas |
+| `resources[].type` | Sin el prefijo `Microsoft.` (igual que en la topología) |
+| `resources[].tags` | **Todas** las etiquetas, sin filtrar (a diferencia de la topología) |
+| `resources[].id` | Id ARM completo, con el namespace del proveedor intacto |
 
 ### Notas
 
-- Recorre **toda** la paginación de ARM: en subscripciones muy grandes la respuesta
-  puede ser extensa. Filtra por `resource_group` siempre que puedas.
+- Sin `resource_group` recorre toda la subscripción: en entornos grandes la
+  respuesta puede ocupar decenas de miles de tokens. **Filtra siempre que puedas.**
 - No incluye recursos a nivel de management group ni de tenant.
 
 ---
 
-## 3.2 `list_untagged_resources`
+## 3.3 `list_untagged_resources`
 
-Auditoría de gobierno: recursos sin ninguna etiqueta.
+Auditoría de gobierno: recursos sin **ninguna** etiqueta.
 
 ### Parámetros
 
@@ -92,40 +196,36 @@ Auditoría de gobierno: recursos sin ninguna etiqueta.
 ```json
 {
   "status": "ok",
-  "subscription_id": "77308696-6250-4529-8d8d-66944e6f5f38",
-  "total_resources": 142,
-  "untagged_count": 17,
-  "untagged_percentage": 11.97,
+  "subscription_id": "77308696-…",
+  "count": 1319,
   "untagged_resources": [
     {
-      "name": "stalzlogsprod001",
-      "type": "Microsoft.Storage/storageAccounts",
-      "location": "eastus",
-      "resource_group": "rg-alz-hub-prod",
-      "tags": {},
-      "id": "/subscriptions/…"
+      "name": "DefaultWorkspace-7730…-CCAN",
+      "type": "OperationalInsights/workspaces",
+      "location": "canadacentral",
+      "resource_group": "DefaultResourceGroup-CCAN",
+      "id": "/subscriptions/7730…/workspaces/DefaultWorkspace-7730…-CCAN"
     }
   ]
 }
 ```
 
-| Campo | Significado |
-|---|---|
-| `total_resources` | Recursos analizados en la subscripción |
-| `untagged_count` | Cuántos no tienen ninguna etiqueta |
-| `untagged_percentage` | Porcentaje sobre el total, redondeado a 2 decimales |
+El resultado viene **ordenado por resource group y nombre**, lo que facilita
+agrupar los hallazgos en el informe.
 
 ### Notas
 
-- Un recurso se considera *sin etiquetar* solo si **no tiene ninguna** etiqueta.
-  No detecta el caso «tiene tags pero le falta `costCenter`»; para eso usa una
-  Azure Policy de tipo *Require a tag* y consulta `get_policy_compliance`.
-- Las etiquetas heredadas del resource group **no** se reflejan aquí: ARM las
-  devuelve solo si están materializadas en el recurso.
+- Criterio estricto: solo entra el recurso que **no tiene ninguna** etiqueta. Para
+  «tiene tags pero le falta `costCenter`», usa una Azure Policy de tipo *Require a
+  tag* y consulta `get_policy_compliance`.
+- Para el **porcentaje** sobre el total, usa `get_subscription_topology`:
+  `summary.resources_without_essential_tags` frente a `summary.total_resources`.
+- Las etiquetas heredadas del resource group **no** cuentan: ARM solo devuelve las
+  materializadas en el recurso.
 
 ---
 
-## 3.3 `get_policy_compliance`
+## 3.4 `get_policy_compliance`
 
 Estado de cumplimiento de Azure Policy (Policy Insights, snapshot `latest`).
 
@@ -140,14 +240,10 @@ Estado de cumplimiento de Azure Policy (Policy Insights, snapshot `latest`).
 ```json
 {
   "status": "ok",
-  "subscription_id": "77308696-6250-4529-8d8d-66944e6f5f38",
+  "subscription_id": "77308696-…",
   "total_evaluations": 512,
   "compliance_rate_percent": 87.5,
-  "summary": {
-    "Compliant": 448,
-    "NonCompliant": 61,
-    "Unknown": 3
-  },
+  "summary": { "Compliant": 448, "NonCompliant": 61, "Unknown": 3 },
   "by_policy_assignment": {
     "require-tag-costcenter": { "Compliant": 120, "NonCompliant": 22 },
     "deny-public-ip": { "Compliant": 98 }
@@ -174,23 +270,23 @@ Estado de cumplimiento de Azure Policy (Policy Insights, snapshot `latest`).
 |---|---|
 | `total_evaluations` | Pares (recurso, política) evaluados, no número de recursos |
 | `compliance_rate_percent` | `Compliant / total × 100` |
-| `summary` | Recuento por estado de cumplimiento |
-| `by_policy_assignment` | Mismo recuento desglosado por asignación de política |
+| `by_policy_assignment` | Recuento por estado desglosado por asignación de política |
 | `non_compliant_truncated` | `true` si había más de 100 incumplimientos y la lista se recortó |
 | `non_compliant_resources` | Detalle, **limitado a los primeros 100 registros** |
 
 ### Notas
 
+- A diferencia de las herramientas de recursos, aquí `resource_type` conserva el
+  prefijo `Microsoft.` tal y como lo devuelve Policy Insights.
 - Un mismo recurso aparece **una vez por cada política** que lo evalúa: por eso
-  `total_evaluations` suele ser mucho mayor que el número de recursos.
-- Los datos provienen del último ciclo de evaluación de Azure Policy (se refresca
-  cada ~24 h o tras un escaneo bajo demanda). No es tiempo real.
-- El límite de 100 registros de detalle está en `MAX_DETAIL_RECORDS`
-  (`tools/policy.py`); el recuento total nunca se trunca.
+  `total_evaluations` suele superar con creces el número de recursos.
+- Los datos son del último ciclo de evaluación (~24 h). No es tiempo real.
+- El límite de detalle está en `MAX_DETAIL_RECORDS` (`tools/policy.py`); el
+  recuento total nunca se trunca.
 
 ---
 
-## 3.4 `detect_infrastructure_drift`
+## 3.5 `detect_infrastructure_drift`
 
 Ejecuta `terraform plan -no-color -input=false -detailed-exitcode` en local.
 
@@ -229,23 +325,21 @@ Plan: 0 to add, 1 to change, 0 to destroy.
 |---|---|---|
 | `0` | `SIN DRIFT` | El estado real coincide con el código |
 | `2` | `DRIFT DETECTADO` | Hay cambios pendientes por aplicar |
-| `1` | `ERROR` | Fallo de Terraform: falta `init`, credenciales del backend, sintaxis, etc. |
+| `1` | `ERROR` | Fallo de Terraform: falta `init`, credenciales del backend, sintaxis… |
 
 ### Notas de seguridad y límites
 
 - **Solo lectura**: nunca ejecuta `apply` ni `destroy`.
 - Se lanza con `shell=False` y lista de argumentos explícita → sin inyección de comandos.
-- `working_dir` y `var_file` se normalizan a ruta absoluta y se valida su existencia
-  antes de ejecutar nada.
+- `working_dir` y `var_file` se normalizan a ruta absoluta y se valida su existencia.
 - La salida se recorta a los **últimos 20 000 caracteres** (`MAX_OUTPUT_CHARS`),
-  conservando el resumen final del plan, que es la parte relevante.
+  conservando el resumen final del plan.
 - El timeout se toma de `terraform.timeout_seconds`; al agotarse, el proceso se aborta.
-- `terraform plan` hace *refresh* del estado contra Azure: puede tardar minutos y
-  consume llamadas a la API.
+- `terraform plan` hace *refresh* contra Azure: puede tardar minutos.
 
 ---
 
-## 3.5 `get_server_configuration`
+## 3.6 `get_server_configuration`
 
 Diagnóstico: muestra la configuración efectiva del servidor.
 
@@ -260,7 +354,7 @@ Ninguno.
   "status": "ok",
   "config_path": "/Users/juancarlosmartinez/PycharmProjects/mcp-azure-landing-zone/config.yaml",
   "config_exists": true,
-  "azure": { "default_subscription_id": "77308696-6250-4529-8d8d-66944e6f5f38" },
+  "azure": { "default_subscription_id": "77308696-…" },
   "terraform": {
     "working_dir": "/Users/juancarlosmartinez/infra/landing-zone/prod",
     "timeout_seconds": 600
@@ -268,5 +362,5 @@ Ninguno.
 }
 ```
 
-Úsala como primer paso cuando algo no funcione: confirma qué fichero se cargó y
-qué valores están activos tras aplicar las variables de entorno.
+Úsala como primer paso cuando algo falle: confirma qué fichero se cargó y qué
+valores están activos tras aplicar las variables de entorno.

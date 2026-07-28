@@ -57,7 +57,7 @@ mcp-azure-landing-zone/
 ├── .env.example              # Plantilla de variables de entorno
 ├── tools/
 │   ├── __init__.py
-│   ├── resources.py          # list_resources / get_untagged_resources
+│   ├── resources.py          # get_full_subscription_topology / get_untagged_resources / list_resources
 │   ├── policy.py             # get_policy_states
 │   └── terraform.py          # run_terraform_plan
 └── docs/                     # Documentación detallada
@@ -109,11 +109,28 @@ Detalles y alternativas en [docs/04-uso.md](docs/04-uso.md).
 
 | Herramienta | Qué hace | Requiere |
 |---|---|---|
-| `list_azure_resources` | Inventario de recursos (filtrable por resource group) | Rol *Reader* en Azure |
-| `list_untagged_resources` | Recursos sin ninguna etiqueta + % sobre el total | Rol *Reader* en Azure |
+| `get_subscription_topology` | Mapa jerárquico por resource group + resumen agregado, optimizado en tokens | Rol *Reader* en Azure |
+| `list_azure_resources` | Inventario plano con id ARM completo (filtrable por resource group) | Rol *Reader* en Azure |
+| `list_untagged_resources` | Recursos sin ninguna etiqueta, ordenados por grupo | Rol *Reader* en Azure |
 | `get_policy_compliance` | Estado Compliant/NonCompliant por política y recurso | Lectura en Policy Insights |
 | `detect_infrastructure_drift` | `terraform plan -no-color -detailed-exitcode` | Terraform en el PATH + backend accesible |
 | `get_server_configuration` | Configuración activa del servidor (diagnóstico) | — |
+
+### Eficiencia en tokens
+
+`get_subscription_topology` está diseñada para que Claude pueda analizar toda la
+infraestructura sin saturar el contexto. Medido sobre una subscripción real de
+42 resource groups y 1 634 recursos:
+
+| Modo | Tokens aprox. |
+|---|---|
+| `include_resources=true` (detalle completo) | ~54 700 |
+| `max_resources_per_group=5` | ~8 000 |
+| `include_resources=false` (solo resumen) | **~3 076** |
+
+Los contadores agregados son idénticos en los tres modos. La estrategia
+recomendada es empezar por el resumen y bajar al detalle solo del grupo que
+interese con `list_azure_resources`.
 
 Referencia completa con formatos de entrada/salida en
 [docs/03-herramientas.md](docs/03-herramientas.md).
